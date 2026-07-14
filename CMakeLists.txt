@@ -11,7 +11,7 @@ endif()
 include(FetchContent)
 FetchContent_Declare(
   asio
-  URL https://github.com/chriskohlhoff/asio/archive/refs/tags/asio-1-30-2.zip
+  URL https://github.com/chriskohlhoff/asio/archive/refs/tags/asio-1-36-0.zip
 )
 FetchContent_MakeAvailable(asio)
 
