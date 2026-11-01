@@ -9,8 +9,18 @@ on:
     branches: [ master, main ]
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Release/Binary version tag (e.g. v1.0.0). If empty, auto-detected from tag or run number.'
+        required: false
+        type: string
+        default: ''
+      asio_version:
+        description: 'Asio version tag'
+        required: false
+        type: string
+        default: 'asio-1-38-2'
       create_release:
-        description: 'Publish a GitHub Release if running on a tag or commit'
+        description: 'Publish a GitHub Release'
         type: boolean
         default: false
         required: false
@@ -19,20 +29,65 @@ permissions:
   contents: write
 
 jobs:
+  determine-version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version_step.outputs.version }}
+      asio_version: ${{ steps.version_step.outputs.asio_version }}
+      should_release: ${{ steps.version_step.outputs.should_release }}
+    steps:
+      - id: version_step
+        run: |
+          # 1. Resolve application / release version
+          INPUT_VER="${{ inputs.version }}"
+          if [ -n "$INPUT_VER" ]; then
+            VER="$INPUT_VER"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VER="${{ github.ref_name }}"
+          else
+            VER="v1.0.0-dev.${{ github.run_number }}"
+          fi
+
+          if [[ "$VER" != v* ]]; then
+            VER="v$VER"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+
+          # 2. Resolve Asio library version
+          ASIO_VER="${{ inputs.asio_version }}"
+          if [ -z "$ASIO_VER" ]; then
+            ASIO_VER="asio-1-38-2"
+          fi
+          echo "asio_version=$ASIO_VER" >> $GITHUB_OUTPUT
+
+          # 3. Determine if release should be published
+          if [[ "${{ github.ref }}" == refs/tags/v* ]] || [ "${{ inputs.create_release }}" = "true" ]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "=========================================="
+          echo "Resolved Application Version: $VER"
+          echo "Resolved Asio Version:        $ASIO_VER"
+          echo "=========================================="
+
   build-and-test:
     name: Build & Test (${{ matrix.os }})
+    needs: determine-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: translator-linux-x64
-            archive_name: translator-linux-x64.tar.gz
+            artifact_name: translator-${{ needs.determine-version.outputs.version }}-linux-x64
+            archive_name: translator-${{ needs.determine-version.outputs.version }}-linux-x64.tar.gz
 
           - os: windows-latest
-            artifact_name: translator-windows-x64
-            archive_name: translator-windows-x64.zip
+            artifact_name: translator-${{ needs.determine-version.outputs.version }}-windows-x64
+            archive_name: translator-${{ needs.determine-version.outputs.version }}-windows-x64.zip
 
     steps:
       - name: Checkout Repository
@@ -58,7 +113,9 @@ jobs:
 
       - name: Configure CMake
         run: |
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
+            -DTRANSLATOR_VERSION="${{ needs.determine-version.outputs.version }}" \
+            -DASIO_VERSION="${{ needs.determine-version.outputs.asio_version }}"
 
       - name: Build Project
         run: |
@@ -80,6 +137,7 @@ jobs:
           chmod +x dist/translator
           cp README.md LICENSE dist/
           echo "=== Testing staged binary ==="
+          ./dist/translator --version
           ./dist/translator --help
           ./dist/translator --status
           tar -czvf ${{ matrix.archive_name }} -C dist .
@@ -96,6 +154,7 @@ jobs:
           }
           Copy-Item README.md, LICENSE dist/
           Write-Host "=== Testing staged binary ==="
+          & ./dist/translator.exe --version
           & ./dist/translator.exe --help
           & ./dist/translator.exe --status
           Compress-Archive -Path dist/* -DestinationPath ${{ matrix.archive_name }} -Force
@@ -108,9 +167,9 @@ jobs:
           retention-days: 14
 
   release:
-    name: Publish Release
-    needs: build-and-test
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release == true)
+    name: Publish Release (${{ needs.determine-version.outputs.version }})
+    needs: [determine-version, build-and-test]
+    if: needs.determine-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -135,6 +194,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.determine-version.outputs.version }}
+          name: Release ${{ needs.determine-version.outputs.version }}
           files: |
             release-assets/*
           generate_release_notes: true

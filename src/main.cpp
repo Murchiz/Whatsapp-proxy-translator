@@ -4,8 +4,21 @@
 #include "server.hpp"
 #include "service/service_manager.hpp"
 
+#include <asio/version.hpp>
 #include <string>
 #include <optional>
+
+#ifndef TRANSLATOR_VERSION
+#define TRANSLATOR_VERSION "v1.0.0"
+#endif
+
+void print_version() {
+    int asio_major = ASIO_VERSION / 100000;
+    int asio_minor = (ASIO_VERSION / 100) % 1000;
+    int asio_patch = ASIO_VERSION % 100;
+    std::println("WhatsApp Proxy Translator {} (Asio {}.{}.{})",
+                 TRANSLATOR_VERSION, asio_major, asio_minor, asio_patch);
+}
 
 void print_usage(const char* prog) {
     std::println(
@@ -39,8 +52,9 @@ Service Management (Windows Service / Linux systemd):
 Internal:
   --service               Run in background service mode (invoked by service managers)
 
-Help:
+Help & Information:
   --help, -h              Show this help message
+  --version, -v           Show version information
 
 Examples:
   # Console mode:
@@ -70,6 +84,7 @@ int main(int argc, char* argv[]) {
     bool status_action = false;
     std::string control_action;
     bool help_action = false;
+    bool version_action = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -96,6 +111,8 @@ int main(int argc, char* argv[]) {
             status_action = true;
         } else if (arg == "--start" || arg == "--stop" || arg == "--restart") {
             control_action = arg.substr(2);
+        } else if (arg == "--version" || arg == "-v") {
+            version_action = true;
         } else if (arg == "--help" || arg == "-h") {
             help_action = true;
         } else {
@@ -103,6 +120,11 @@ int main(int argc, char* argv[]) {
             print_usage(argv[0]);
             return 1;
         }
+    }
+
+    if (version_action) {
+        print_version();
+        return 0;
     }
 
     if (help_action) {
