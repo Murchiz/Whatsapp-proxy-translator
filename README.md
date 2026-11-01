@@ -56,6 +56,11 @@ cmake ..
 make -j$(nproc)
 ```
 
+### Running Automated Tests
+```bash
+ctest --test-dir build -C Release --output-on-failure
+```
+
 ---
 
 ## Usage

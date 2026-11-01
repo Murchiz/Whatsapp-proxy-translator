@@ -1,0 +1,142 @@
+name: CI & Release
+
+on:
+  push:
+    branches: [ master, main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish a GitHub Release if running on a tag or commit'
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: translator-linux-x64
+            archive_name: translator-linux-x64.tar.gz
+
+          - os: windows-latest
+            artifact_name: translator-windows-x64
+            archive_name: translator-windows-x64.zip
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libssl-dev openssl
+
+      - name: Detect OpenSSL Path (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\Program Files\OpenSSL-Win64") {
+            Write-Host "Found OpenSSL at C:\Program Files\OpenSSL-Win64"
+            echo "OPENSSL_ROOT_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
+          } elseif (Test-Path "C:\Program Files\OpenSSL") {
+            Write-Host "Found OpenSSL at C:\Program Files\OpenSSL"
+            echo "OPENSSL_ROOT_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
+          }
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Project
+        run: |
+          cmake --build build --config Release -j
+
+      - name: Run Tests (CTest)
+        run: |
+          ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stage & Verify Artifacts (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          if [ -f build/translator ]; then
+            cp build/translator dist/
+          elif [ -f build/Release/translator ]; then
+            cp build/Release/translator dist/
+          fi
+          chmod +x dist/translator
+          cp README.md LICENSE dist/
+          echo "=== Testing staged binary ==="
+          ./dist/translator --help
+          ./dist/translator --status
+          tar -czvf ${{ matrix.archive_name }} -C dist .
+
+      - name: Stage & Verify Artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if (Test-Path build/Release/translator.exe) {
+            Copy-Item build/Release/translator.exe dist/
+          } elseif (Test-Path build/translator.exe) {
+            Copy-Item build/translator.exe dist/
+          }
+          Copy-Item README.md, LICENSE dist/
+          Write-Host "=== Testing staged binary ==="
+          & ./dist/translator.exe --help
+          & ./dist/translator.exe --status
+          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.archive_name }} -Force
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.archive_name }}
+          retention-days: 14
+
+  release:
+    name: Publish Release
+    needs: build-and-test
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate Checksums
+        working-directory: release-assets
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          echo "Generated SHA256 Checksums:"
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
