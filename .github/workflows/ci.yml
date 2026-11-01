@@ -112,10 +112,7 @@ jobs:
           }
 
       - name: Configure CMake
-        run: |
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
-            -DTRANSLATOR_VERSION="${{ needs.determine-version.outputs.version }}" \
-            -DASIO_VERSION="${{ needs.determine-version.outputs.asio_version }}"
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DTRANSLATOR_VERSION="${{ needs.determine-version.outputs.version }}" -DASIO_VERSION="${{ needs.determine-version.outputs.asio_version }}"
 
       - name: Build Project
         run: |
